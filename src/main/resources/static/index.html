@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文件分片上传</title>
+    <script src="axios.min.js"></script>
+    <script src="spark-md5.min.js"></script>
+    <style>
+        html,body{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100vh;
+            background-color: #333;
+        }
+        .uploadBox{
+            width: 600px;
+            box-shadow: 2px 3px 10px black;
+            border-radius: 4px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: end;
+            justify-content: center;
+            background-color: gainsboro;
+        }
+        .uploadBtn{
+            width: 100px;
+            height: 20px;
+            background-color: darkcyan;
+            border-radius: 4px;
+            text-align: center;
+            color: white;
+            display: flex;
+            padding: 5px 10px;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .uploadBtn:hover{
+            opacity: 0.9;
+        }
+        .fileInfo{
+            width: 100%;
+            text-align: left;
+            display: flex;
+            justify-content: center;
+        }
+        .fileInfo > table {
+            border: 1px solid black;
+            border-collapse: 0px;
+            width: 100%;
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        header{
+            position: fixed;
+            top: 0;
+            height: 40px;
+            background-color: #000;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: start;
+            width: 100%;
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <span style="padding-left: 10px; font-size: 18px; font-weight: bold;">胡编乱码</span>
+    </header>
+    <div class="uploadBox">
+        <div id="upload" class="uploadBtn">上传文件</div>
+        <input type="file" id="file" hidden/>
+        <div class="fileInfo">
+            <table>
+                <caption>文件信息</caption>
+                <tr><th>文件名称</th><td id="fileName">为选择文件</td></tr>
+                <tr><th>文件大小</th><td id="fileSize">0 kb</td></tr>
+                <tr><th>分片大小</th><td id="sliceSize">0 kb</td></tr>
+                <tr><th>分片数量</th><td id="sliceCount">0</td></tr>
+                <tr><th>MD5码</th><td id="fileMd5">-</td></tr>
+                <footer>
+                    <tr><th>上传状态</th><td id="status"></td></tr>
+                </footer>
+            </table>
+        </div>
+        <div style="width: 100%; text-align: left; padding-top: 10px; font-size: 14px; color: gray;">V0.0.1 2023/10/21 15:10</div>
+
+    </div>
+    <script>
+        document.getElementById("upload").addEventListener('click',()=>{
+            document.getElementById("file").click()
+        })
+        document.getElementById("file").addEventListener("change",(e)=>{
+            let file = e.target.files[0];
+            document.getElementById("fileName").innerText = file.name;
+            document.getElementById("fileSize").innerText = Math.ceil(file.size / 1024) + 'kb';
+            sliceFileAndUpload(file, 1000 * 1024);
+        })
+
+        function sliceFileAndUpload(file, chunkSize){
+            var filePartList = [];
+            var blobSlice = File.prototype.slice || File.prototype.mozSlice || File.prototype.webkitSlice;
+            var chunkCount = Math.ceil(file.size / chunkSize);  //分片数量
+            document.getElementById("sliceSize").innerHTML = chunkSize;
+            document.getElementById("sliceCount").innerHTML = chunkCount;
+            var currentChunk = 0;   //当前索引
+            var spark = new SparkMD5.ArrayBuffer();
+            var fileReader = new FileReader();
+            fileReader.onload = e => {  //FileReader.onload 回调函数会在每次读区完成后触发
+                spark.append(e.target.result);
+                currentChunk++;
+                if(currentChunk < chunkCount){
+                    loadNext()
+                    document.getElementById("fileMd5").innerHTML = '计算中……'
+                }else{
+                    var fileMd5 = spark.end();
+                    document.getElementById("fileMd5").innerHTML = fileMd5;
+                    var progressEl = document.getElementById("status");
+                    filePartList.forEach((item,index)=>{
+                        let formData = new FormData();
+                        formData.append('file', item.filePart);
+                        formData.append('fileMd5', fileMd5);
+                        formData.append('chunkCount', chunkCount);
+                        formData.append('currentIndex', item.currentIndex);
+                        formData.append('fileName', file.name);
+                        axios.post('/file/uploadBySlice',formData,{headers:{'Content-Type': 'multipart/form-data'}}).then(res=>{
+                            console.log(res.data)
+                            if(res.data == 1){
+                              progressEl.innerHTML = '上传完成';
+                            }else{
+                              progressEl.innerHTML = '上传中……';
+                            }
+                        })
+                    })
+
+                }
+            }
+            fileReader.onerror = () => {
+                console.log("文件读取处理发生错误");
+            }
+
+            function loadNext() {
+                var temp = {};
+                var start = currentChunk * chunkSize;
+                var end = (start + chunkSize) >= file.size ? file.size : start + chunkSize;
+                var filePart = blobSlice.call(file, start, end);    //分隔文件
+                temp.currentIndex = start;
+                temp.filePart = filePart;
+                filePartList.push(temp);    //将分片文件加入到分片文件列表中
+                fileReader.readAsArrayBuffer(filePart); //将分片文件使用FileReader读取
+            }
+
+            loadNext();
+        }
+    </script>
+</body>
+</html>
